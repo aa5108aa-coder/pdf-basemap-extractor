@@ -55,34 +55,43 @@ HTML_TEMPLATE = """
 """
 
 def process_stream(stream):
-    tokens = stream.split()
+    L = len(stream)
+    pos = 0
+    out = bytearray()
+    
     stroke_c = (0,0,0)
     fill_c = (0,0,0)
     current_w = 0.0
     
-    i = 0
-    L = len(tokens)
-    while i < L:
-        tok = tokens[i]
-        
-        if tok == b'RG' and i >= 3:
-            try: stroke_c = (float(tokens[i-3]), float(tokens[i-2]), float(tokens[i-1]))
+    prev3, prev2, prev1 = b'', b'', b''
+    
+    while pos < L:
+        next_space = stream.find(b' ', pos)
+        if next_space == -1:
+            tok = stream[pos:]
+            pos = L
+        else:
+            tok = stream[pos:next_space]
+            pos = next_space + 1
+            
+        if tok == b'RG':
+            try: stroke_c = (float(prev3), float(prev2), float(prev1))
             except: pass
-        elif tok == b'rg' and i >= 3:
-            try: fill_c = (float(tokens[i-3]), float(tokens[i-2]), float(tokens[i-1]))
+        elif tok == b'rg':
+            try: fill_c = (float(prev3), float(prev2), float(prev1))
             except: pass
-        elif tok in (b'K', b'k') and i >= 4:
+        elif tok in (b'K', b'k'):
             c = (1,0,0) if tok == b'K' else (0,0,1)
             if tok == b'K': stroke_c = c
             else: fill_c = c
-        elif tok in (b'G', b'g') and i >= 1:
+        elif tok in (b'G', b'g'):
             try:
-                v = float(tokens[i-1])
+                v = float(prev1)
                 if tok == b'G': stroke_c = (v,v,v)
                 else: fill_c = (v,v,v)
             except: pass
-        elif tok == b'w' and i >= 1:
-            try: current_w = float(tokens[i-1])
+        elif tok == b'w':
+            try: current_w = float(prev1)
             except: pass
             
         if tok in (b'S', b's'):
@@ -96,10 +105,11 @@ def process_stream(stream):
             elif sc: tok = b'f' if tok in (b'B', b'b') else b'f*'
             elif fc: tok = b'S' if tok in (b'B', b'B*') else b's'
             
-        tokens[i] = tok
-        i += 1
+        out.extend(tok)
+        out.extend(b' ')
+        prev3, prev2, prev1 = prev2, prev1, tok
 
-    return b' '.join(tokens)
+    return bytes(out)
 
 def process_pdf(input_bytes, remove_chinese):
     doc = pymupdf.open(stream=input_bytes, filetype="pdf")
