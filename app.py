@@ -11,12 +11,12 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>都市計畫圖轉換工具 (終極完美保留文字版)</title>
+    <title>都市計畫圖底圖萃取工具</title>
     <style>
         body { font-family: "Microsoft JhengHei", sans-serif; padding: 20px; text-align: center; background-color: #f5f7fa; color: #333; }
         .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { font-size: 24px; margin-bottom: 10px; }
-        p { color: #666; margin-bottom: 20px; }
+        p { color: #666; margin-bottom: 20px; line-height: 1.6; text-align: left; }
         .btn { padding: 10px 20px; margin: 15px 5px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; transition: background 0.3s; }
         .btn:hover { background: #0056b3; }
         input[type="file"] { margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
@@ -26,11 +26,11 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>都市計畫圖轉換工具 (終極完美保留文字版)</h1>
-        <p>上傳包含色塊與文字的 PDF 檔案，系統將：<br>
-        1. 根據 CAD 線寬特徵，徹底去除所有粗黑框線<br>
-        2. 去除所有彩色圖塊<br>
-        3. <b>完美保留真實的樓層數字文字 (Text Layer)，方便程式直接讀取！</b></p>
+        <h1>都市計畫圖底圖萃取工具</h1>
+        <p>請上傳原始的都市計畫圖 PDF 檔案，系統將自動進行以下處理：<br>
+        1. 移除各類使用分區的彩色圖塊<br>
+        2. 移除圖面粗框線，保留底層的街道、建築與地籍細線<br>
+        3. 保留可選取的「樓層數字文字層」，以利後續 3D 建模程式讀取</p>
         
         <form action="/convert" method="post" enctype="multipart/form-data" onsubmit="document.getElementById('loading').style.display='block'; document.getElementById('submit-btn').disabled=true;">
             <input type="file" name="pdf_file" accept=".pdf" required />
@@ -38,71 +38,75 @@ HTML_TEMPLATE = """
             <div class="checkbox-container">
                 <label>
                     <input type="checkbox" name="remove_chinese" value="yes"> 
-                    <b>完全去除所有中文字元與大型標籤 (如：崇明國中、機45)</b>
+                    <b>完全去除中文標籤 (如地名、學校名稱)</b>
                 </label>
                 <div style="font-size: 12px; color: #856404; margin-top: 5px;">
-                    注意：由於 CAD 匯出時中文被畫成了向量圖形，啟用此選項會連同中文字「底下的局部線條」一併挖空清除。若您只在乎建築輪廓與樓層數字，此選項能讓畫面最為乾淨。
+                    備註：由於原始檔案中的中文標籤為向量線條，若勾選此選項，標籤底下的部分地圖線條會連帶被移除而產生微小斷點。
                 </div>
             </div>
             
-            <button type="submit" id="submit-btn" class="btn">開始極速轉換</button>
+            <button type="submit" id="submit-btn" class="btn">開始轉換</button>
         </form>
         
-        <div id="loading">處理中（完美保留文字），大約需要 15 ~ 30 秒，請耐心等候...</div>
+        <div id="loading">處理中，大約需要 15 ~ 30 秒，請耐心等候...</div>
     </div>
 </body>
 </html>
 """
 
 def process_stream(stream):
-    tokens = re.split(rb'\s+', stream)
-    new_tokens = []
-    i = 0
+    import re
+    # 極低記憶體、極速解析法
+    new_stream = bytearray()
+    
     stroke_c = (0,0,0)
     fill_c = (0,0,0)
     current_w = 0.0
     
     def is_col(c): return max(c)-min(c)>0.05 or sum(c)>2.8
-
-    while i < len(tokens):
-        tok = tokens[i]
+    
+    prev3, prev2, prev1 = b'', b'', b''
+    
+    for match in re.finditer(rb'\S+', stream):
+        tok = match.group()
         
-        if tok == b'RG' and i >= 3:
-            try: stroke_c = (float(tokens[i-3]), float(tokens[i-2]), float(tokens[i-1]))
+        if tok == b'RG':
+            try: stroke_c = (float(prev3), float(prev2), float(prev1))
             except: pass
-        elif tok == b'rg' and i >= 3:
-            try: fill_c = (float(tokens[i-3]), float(tokens[i-2]), float(tokens[i-1]))
+        elif tok == b'rg':
+            try: fill_c = (float(prev3), float(prev2), float(prev1))
             except: pass
-        elif tok in [b'K', b'k'] and i >= 4:
+        elif tok in (b'K', b'k'):
             c = (1,0,0) if tok == b'K' else (0,0,1)
             if tok == b'K': stroke_c = c
             else: fill_c = c
-        elif tok in [b'G', b'g'] and i >= 1:
+        elif tok in (b'G', b'g'):
             try:
-                v = float(tokens[i-1])
+                v = float(prev1)
                 if tok == b'G': stroke_c = (v,v,v)
                 else: fill_c = (v,v,v)
             except: pass
-        elif tok == b'w' and i >= 1:
-            try: current_w = float(tokens[i-1])
+        elif tok == b'w':
+            try: current_w = float(prev1)
             except: pass
             
-        if tok in [b'S', b's']:
-            # 移除所有彩色邊線，以及線寬超過 0.1 的粗線
+        if tok in (b'S', b's'):
             if is_col(stroke_c) or current_w > 0.1: tok = b'n'
-        elif tok in [b'f', b'F', b'f*']:
+        elif tok in (b'f', b'F', b'f*'):
             if is_col(fill_c): tok = b'n'
-        elif tok in [b'B', b'B*', b'b', b'b*']:
+        elif tok in (b'B', b'B*', b'b', b'b*'):
             sc = is_col(stroke_c) or current_w > 0.1
             fc = is_col(fill_c)
             if sc and fc: tok = b'n'
-            elif sc: tok = b'f' if tok in [b'B', b'b'] else b'f*'
-            elif fc: tok = b'S' if tok in [b'B', b'B*'] else b's'
+            elif sc: tok = b'f' if tok in (b'B', b'b') else b'f*'
+            elif fc: tok = b'S' if tok in (b'B', b'B*') else b's'
             
-        new_tokens.append(tok)
-        i += 1
+        new_stream.extend(tok)
+        new_stream.extend(b' ')
+        
+        prev3, prev2, prev1 = prev2, prev1, tok
 
-    return b' '.join(new_tokens)
+    return bytes(new_stream)
 
 def process_pdf(input_bytes, remove_chinese):
     doc = pymupdf.open(stream=input_bytes, filetype="pdf")
